@@ -14,10 +14,12 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
-    "@types/node": "^22.13.14",
+    "@types/node": "^22.13.16",
     "typescript": "^5.8.2"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.8.0"
+    "@modelcontextprotocol/sdk": "^1.8.0",
+    "node-pty": "^1.0.0",
+    "uuid": "^11.1.0"
   }
 }

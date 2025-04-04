@@ -9,8 +9,8 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { LLDB_Enum } from './server.const';
 import { spawn } from 'child_process';
-import * as readline from 'readline';
 import * as path from 'path';
+
 
 
 const activeSessions = new Map<string, IlldbSession>();
@@ -50,7 +50,6 @@ export class LldbServer {
         }));
 
         this.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-            // Route the tool call to the appropriate handler based on the tool name
             switch (request.params.name) {
                 case LLDB_Enum.LLDB_START:
                     return await this.handleLldbStart(request.params.arguments);
@@ -82,6 +81,14 @@ export class LldbServer {
                     return await this.handleLldbExamine(request.params.arguments);
                 case LLDB_Enum.LLDB_INFO_REGISTERS:
                     return await this.handleLldbInfoRegisters(request.params.arguments);
+                case LLDB_Enum.LLDB_ATTACH:
+                    return await this.handleLldbAttach(request.params.arguments);
+                case LLDB_Enum.LLDB_RUN:
+                    return await this.handleLldbRun(request.params.arguments);
+                case LLDB_Enum.LLDB_FRAME_INFO:
+                    return await this.handleLldbFrameInfo(request.params.arguments);
+                case LLDB_Enum.LLDB_DISASSEMBLE:
+                    return await this.handleLldbDisassemble(request.params.arguments);
                 default:
                     throw new McpError(
                         ErrorCode.MethodNotFound,
@@ -90,111 +97,266 @@ export class LldbServer {
             }
         });
     }
+    private async handleLldbDisassemble(args: any) {
+        const { sessionId } = args;
+
+        if (!activeSessions.has(sessionId)) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `No active GDB session with ID: ${sessionId}`
+                    }
+                ],
+                isError: true
+            };
+        }
+
+        const session = activeSessions.get(sessionId)!;
+
+        try {
+            const disassemble_output = await this.executeLldbCommand(session, `disassemble --name ${args.address}`);
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: disassemble_output
+                    }
+                ]
+            };
+        } catch (error) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Error: ${error}`
+                    }
+                ],
+                isError: true
+            };
+        }
+    }
+
+    private async handleLldbFrameInfo(args: any) {
+        const { sessionId } = args;
+
+        if (!activeSessions.has(sessionId)) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `No active GDB session with ID: ${sessionId}`
+                    }
+                ],
+                isError: true
+            };
+        }
+
+        const session = activeSessions.get(sessionId)!;
+
+        try {
+            const frame_output = await this.executeLldbCommand(session, `frame info ${args.frameIndex}`);
+            const vars_output = await this.executeLldbCommand(session, `frame variable`);
+
+            const source_output = await this.executeLldbCommand(session, `source list`);
 
 
-   private async handleLldbStart(args: any) {
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Command: Frame info \n\nOutput:\n${frame_output}\n\nCommand: Frame variable \n\nOutput:\n${vars_output}\n\nCommand: Source list \n\nOutput:\n${source_output}`
+                    }
+                ]
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Failed to run the program: ${errorMessage}`
+                    }
+                ],
+                isError: true
+            };
+        }
+    }
+
+
+    private async handleLldbRun(args: any) {
+        const { sessionId } = args;
+
+        if (!activeSessions.has(sessionId)) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `No active GDB session with ID: ${sessionId}`
+                    }
+                ],
+                isError: true
+            };
+        }
+
+        const session = activeSessions.get(sessionId)!;
+
+        try {
+            const output = await this.executeLldbCommand(session, `run`);
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Command: Run \n\nOutput:\n${output}`
+                    }
+                ]
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Failed to run the program: ${errorMessage}`
+                    }
+                ],
+                isError: true
+            };
+        }
+    }
+
+    private async handleLldbAttach(args: any) {
+        const { sessionId, pid } = args;
+
+        if (!activeSessions.has(sessionId)) {
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `No active GDB session with ID: ${sessionId}`
+                    }
+                ],
+                isError: true
+            };
+        }
+
+        const session = activeSessions.get(sessionId)!;
+
+        try {
+            const output = await this.executeLldbCommand(session, `process attach -p ${pid}`);
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Attached to process ${pid}\n\nOutput:\n${output}`
+                    }
+                ]
+            };
+        } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Failed to attach to process: ${errorMessage}`
+                    }
+                ],
+                isError: true
+            };
+        }
+    }
+
+
+    private async handleLldbStart(args: any) {
         const lldbPath = args.lldbPath || 'lldb';
         const workingDir = args.workingDir || process.cwd();
-        
-        // Create a unique session ID
+
         const sessionId = Date.now().toString();
-        
+
         try {
-          // Start LLDB process
-          const lldbProcess = spawn(lldbPath, [], {
-            cwd: workingDir,
-            env: process.env,
-            stdio: ['pipe', 'pipe', 'pipe']
-          });
-          
-          // Create readline interface for reading LLDB output
-          const rl = readline.createInterface({
-            input: lldbProcess.stdout,
-            terminal: false
-          });
-          
-          // Create new LLDB session
-          const session: IlldbSession = {
-            process: lldbProcess,
-            rl,
-            ready: false,
-            id: sessionId,
-            workingDir
-          };
-          
-          // Store session in active sessions map
-          activeSessions.set(sessionId, session);
-          
-          // Collect LLDB output until ready
-          let outputBuffer = '';
-          
-          // Wait for LLDB to be ready (when it outputs the initial prompt)
-          await new Promise<void>((resolve, reject) => {
-            const timeout = setTimeout(() => {
-              reject(new Error('LLDB start timeout'));
-            }, 10000); // 10 second timeout
-            
-            rl.on('line', (line) => {
-              // Append line to output buffer
-              outputBuffer += line + '\n';
-              
-              // Check if LLDB is ready (outputs prompt)
-              if (line.includes('(lldb)')) {
-                clearTimeout(timeout);
-                session.ready = true;
-                resolve();
-              }
+            const lldbProcess = spawn(lldbPath, [], {
+                cwd: workingDir,
+                env: process.env,
+                stdio: ['pipe', 'pipe', 'pipe']
             });
-            
-            lldbProcess.stderr.on('data', (data) => {
-              outputBuffer += `[stderr] ${data.toString()}\n`;
-            });
-            
-            lldbProcess.on('error', (err) => {
-              clearTimeout(timeout);
-              reject(err);
-            });
-            
-            lldbProcess.on('exit', (code) => {
-              clearTimeout(timeout);
-              if (!session.ready) {
-                reject(new Error(`LLDB process exited with code ${code}`));
-              }
-            });
-            
-            // Send initial command to trigger output
+            let session: IlldbSession = {
+                process: lldbProcess,
+                ready: false,
+                id: sessionId,
+                workingDir
+            };
+
+            activeSessions.set(sessionId, session);
+
+            let outputBuffer = '';
             lldbProcess.stdin.write('version\n');
-          });
-          
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `LLDB session started with ID: ${sessionId}\n\nOutput:\n${outputBuffer}`
-              }
-            ]
-          };
+
+
+            await new Promise<void>((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('LLDB start timeout'));
+                }, 10000); 
+
+
+                lldbProcess.stdout.on('data', (data) => {
+                    outputBuffer += data.toString() + '\n';
+                });
+                setTimeout(() => {
+                    if (outputBuffer.toString().includes('(lldb)')) {
+                        clearTimeout(timeout);
+                        session.ready = true;
+                        resolve();
+                    }
+                }, 2000); 
+
+                lldbProcess.stderr.on('data', (data) => {
+                    outputBuffer += `[stderr] ${data.toString()}\n`;
+                });
+
+                lldbProcess.on('error', (err) => {
+                    clearTimeout(timeout);
+                    reject(err);
+                });
+
+                lldbProcess.on('exit', (code) => {
+                    clearTimeout(timeout);
+                    if (!session.ready) {
+                        reject(new Error(`LLDB process exited with code ${code}`));
+                    }
+                });
+            });
+
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `LLDB session started with ID: ${sessionId}\n\nOutput:\n${outputBuffer}`
+                    }
+                ]
+            };
         } catch (error) {
-          // Clean up if an error occurs
-          if (activeSessions.has(sessionId)) {
-            const session = activeSessions.get(sessionId)!;
-            session.process.kill();
-            session.rl?.close();
-            activeSessions.delete(sessionId);
-          }
-          
-          const errorMessage = error instanceof Error ? error.message : String(error);
-          return {
-            content: [
-              {
-                type: 'text',
-                text: `Failed to start LLDB: ${errorMessage}`
-              }
-            ],
-            isError: true
-          };
+            // Clean up if an error occurs
+            if (activeSessions.has(sessionId)) {
+                const session = activeSessions.get(sessionId)!;
+                session.process.kill();
+                activeSessions.delete(sessionId);
+            }
+
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            return {
+                content: [
+                    {
+                        type: 'text',
+                        text: `Failed to start LLDB: ${errorMessage}`
+                    }
+                ],
+                isError: true
+            };
         }
-      }
+    }
 
     private async handleLldbLoad(args: any) {
         const { sessionId, program, arguments: programArgs = [] } = args;
@@ -368,14 +530,11 @@ export class LldbServer {
         const session = activeSessions.get(sessionId)!;
 
         try {
-            // First load the program
-            const fileOutput = await this.executeLldbCommand(session, `target core "${program}"`);
+            const fileOutput = await this.executeLldbCommand(session, `file "${program}"`);
 
-            // Then load the core file
             const coreOutput = await this.executeLldbCommand(session, `target core "${corePath}"`);
 
-            // Get backtrace to show initial state
-            const backtraceOutput = await this.executeLldbCommand(session, "backtrace");
+            const backtraceOutput = await this.executeLldbCommand(session, "bt");
 
             return {
                 content: [
@@ -517,7 +676,6 @@ export class LldbServer {
         const session = activeSessions.get(sessionId)!;
 
         try {
-            // Use stepi for instruction-level stepping, otherwise step
             const command = instructions ? "stepi" : "step";
             const output = await this.executeLldbCommand(session, command);
 
@@ -561,7 +719,6 @@ export class LldbServer {
         const session = activeSessions.get(sessionId)!;
 
         try {
-            // Use nexti for instruction-level stepping, otherwise next
             const command = instructions ? "nexti" : "next";
             const output = await this.executeLldbCommand(session, command);
 
@@ -647,8 +804,7 @@ export class LldbServer {
         const session = activeSessions.get(sessionId)!;
 
         try {
-            // Build backtrace command with options
-            let command = full ? "backtrace full" : "backtrace";
+            let command = full ? "bt full" : "bt";
             if (typeof limit === 'number') {
                 command += ` ${limit}`;
             }
@@ -737,9 +893,8 @@ export class LldbServer {
         const session = activeSessions.get(sessionId)!;
 
         try {
-            // Format examine command: x/[count][format] [expression]
-            let sizeChar = 'b'; // default byte size
-            let formatChar = 'x'; // default hex format
+            let sizeChar = 'b'; 
+            let formatChar = 'x';
             if (format.length > 0) {
                 if (['b', 'h', 'w', 'g'].includes(format[0])) {
                     sizeChar = format[0];
@@ -748,10 +903,8 @@ export class LldbServer {
                     formatChar = format[0];
                 }
             }
-            // Map size characters to byte counts
             const sizeMap: { [key: string]: number } = { 'b': 1, 'h': 2, 'w': 4, 'g': 8 };
             const size = sizeMap[sizeChar] || 1;
-            // Map format characters
             const formatMap: { [key: string]: string } = {
                 'x': 'hex', 'd': 'decimal', 'u': 'unsigned',
                 'o': 'octal', 't': 'binary', 'f': 'float',
@@ -827,117 +980,97 @@ export class LldbServer {
     }
 
 
-    private executeLldbCommand(session: IlldbSession, command: string): Promise<string> {
+    private async executeLldbCommand(session: IlldbSession, command: string): Promise<string> {
         return new Promise<string>((resolve, reject) => {
-            if (!session.process || session.process.exitCode !== null) {
-                const exitCodeInfo = session.process?.exitCode !== null ? `exit code ${session.process.exitCode}` : 'process missing';
-                reject(new Error(`LLDB session is not ready or process has terminated (${exitCodeInfo})`));
+            if (!session.process) {
+                reject(new Error("LLDB session is not ready: process is missing"));
                 return;
             }
-            if (!session.ready) {
-                 console.warn(`Executing LLDB command "${command}" while session marked as not ready.`);
+            if (session.process.exitCode !== null || session.process.stdin?.writable === false) {
+                const exitCodeInfo = session.process.exitCode !== null ? `exit code ${session.process.exitCode}` : 'stdin not writable';
+                reject(new Error(`LLDB session is not ready or process has terminated (${exitCodeInfo})`));
+                return;
             }
 
             let stdoutBuffer = '';
             let stderrOutput = '';
-            const promptPattern = '(lldb) ';   
-            let commandEchoSeen = false;
+            const promptPattern = '(lldb)';
+            const commandTimeoutMs = 10000;
             let timeoutId: NodeJS.Timeout | null = null;
+            let listenersAttached = false;
 
-            // --- Listener Functions ---
             const cleanupListeners = () => {
+                if (!listenersAttached) return;
+                listenersAttached = false;
+
                 if (timeoutId) clearTimeout(timeoutId);
-                session.process!.stdout?.removeListener('data', stdoutListener);
-                session.process!.stderr?.removeListener('data', stderrListener);
-                session.process!.removeListener('exit', exitListener);
-                session.process!.removeListener('error', errorListener);
+                timeoutId = null;
+
+                session.process?.stdout?.removeListener('data', stdoutListener);
+                session.process?.stderr?.removeListener('data', stderrListener);
+                session.process?.removeListener('exit', exitListener);
+                session.process?.removeListener('error', errorListener);
             };
 
             const stdoutListener = (data: Buffer) => {
-                const chunk = data.toString();
+                const chunk = data.toString('utf-8');
                 stdoutBuffer += chunk;
-                // console.debug(`[LLDB STDOUT] Received chunk: ${chunk.substring(0,100)}...`); // Verbose logging
-                // console.debug(`[LLDB STDOUT] Buffer now: ${stdoutBuffer.substring(stdoutBuffer.length-100)}...`); // Verbose logging
 
-                 // Attempt to filter command echo (simple check). Needs to happen before prompt check.
-                 if (!commandEchoSeen) {
-                    const firstLine = stdoutBuffer.split('\n')[0].trim();
-                    if (firstLine === command.trim()) {
-                        // console.debug('[LLDB STDOUT] Detected command echo.');
-                        commandEchoSeen = true;
-                        // Remove the echoed command line from buffer
-                        const lines = stdoutBuffer.split('\n');
-                        stdoutBuffer = lines.slice(1).join('\n');
-                        // Check immediately if the prompt followed the echo
-                        if (stdoutBuffer.includes(promptPattern)) {
-                            // console.debug('[LLDB STDOUT] Found prompt immediately after echo removal.');
-                            const promptIndex = stdoutBuffer.indexOf(promptPattern);
-                            const result = stdoutBuffer.substring(0, promptIndex).trim();
+                let check = false;
+
+                if (!check) {
+                    check = true;
+                    setTimeout(() => {
+                        if (stdoutBuffer.trimEnd().startsWith(promptPattern)) {
                             cleanupListeners();
-                            resolve(result + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : ''));
-                            return;
+                            const result = stdoutBuffer + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : '');
+                            resolve(result);
                         }
-                    } else if (stdoutBuffer.trim().length > 0 && stdoutBuffer.trim() !== command.trim()) {
-                         // If we received significant data different from the command, assume no echo or missed.
-                         // console.debug('[LLDB STDOUT] Significant data received, assuming no/missed echo.');
-                         commandEchoSeen = true;
-                    }
-                 }
-
-                // Check if the buffer contains the prompt pattern
-                const promptIndex = stdoutBuffer.indexOf(promptPattern);
-                if (promptIndex !== -1) {
-                    // console.debug(`[LLDB STDOUT] Found prompt at index ${promptIndex}. Resolving.`);
-                    cleanupListeners();
-                    const result = stdoutBuffer.substring(0, promptIndex).trim(); // Content before the prompt
-                    resolve(result + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : ''));
+                    }, 1000);
                 }
+
             };
 
             const stderrListener = (data: Buffer) => {
-                const errorText = data.toString();
-                // console.debug(`[LLDB STDERR] Received: ${errorText}`); // Verbose logging
+                const errorText = data.toString('utf-8');
                 stderrOutput += errorText;
             };
 
             const exitListener = (code: number | null, signal: string | null) => {
-                // console.warn(`[LLDB PROCESS] Exited with code: ${code}, signal: ${signal}`);
                 cleanupListeners();
-                const finalOutput = stdoutBuffer.trim() + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : '');
-                // Resolve with output + error, as process terminated during command execution
-                resolve(finalOutput + `\n[LLDB process exited during command with code: ${code ?? 'unknown'}, signal: ${signal ?? 'unknown'}]`);
+                const finalOutput = stdoutBuffer + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : '');
+                resolve(finalOutput + `\n[LLDB process exited during command execution. Code: ${code ?? 'unknown'}, Signal: ${signal ?? 'unknown'}]`);
             };
 
-             const errorListener = (err: Error) => {
-                // console.error(`[LLDB PROCESS] Error: ${err.message}`);
+            const errorListener = (err: Error) => {
                 cleanupListeners();
                 reject(new Error(`LLDB process error: ${err.message}\nOutput so far:\n${stdoutBuffer}\nStderr:\n${stderrOutput}`));
             };
 
-            // --- Setup and Execution ---
-
-            // Set a timeout
             timeoutId = setTimeout(() => {
-                // console.warn(`[LLDB TIMEOUT] Command "${command}" timed out after 10s.`);
                 cleanupListeners();
-                const finalOutput = stdoutBuffer.trim() + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : '');
-                // Resolve with timeout message appended, providing partial output
-                resolve(finalOutput + `\n[Timeout waiting for LLDB response after 10 seconds for command: ${command}]`);
-            }, 10000); // 10 second timeout
+                const finalOutput = stdoutBuffer + (stderrOutput ? `\n[stderr]:\n${stderrOutput}` : '');
 
-            // Add listeners BEFORE writing the command
-            session.process!.stdout?.on('data', stdoutListener);
-            session.process!.stderr?.on('data', stderrListener);
-            session.process!.once('exit', exitListener); // Use once for exit
-            session.process!.once('error', errorListener); // Listen for process errors
+                resolve(finalOutput + `\n[Timeout waiting for LLDB response after ${commandTimeoutMs / 1000} seconds for command: ${command}]`);
+            }, commandTimeoutMs);
 
-            // Write command to LLDB's stdin
-            // console.debug(`[LLDB STDIN] Writing command: ${command}`);
-            session.process!.stdin?.write(command + '\n', (err) => {
+            if (!session.process.stdout || !session.process.stderr || !session.process.stdin) {
+                cleanupListeners(); // Clear timeout if set
+                reject(new Error("LLDB process stdout, stderr, or stdin stream is missing."));
+                return;
+            }
+
+            session.process.stdout.on('data', stdoutListener);
+            session.process.stderr.on('data', stderrListener);
+            session.process.once('exit', exitListener);
+            session.process.once('error', errorListener);
+            listenersAttached = true;
+
+
+            session.process.stdin.write(command + '\n', 'utf-8', (err) => {
                 if (err) {
-                    // console.error(`[LLDB STDIN] Error writing command: ${err.message}`);
                     cleanupListeners();
-                    reject(new Error(`Failed to write to LLDB stdin: ${err.message}`));
+                    reject(new Error(`Failed to write command to LLDB stdin: ${err.message}`));
                 }
             });
         });
@@ -952,37 +1085,27 @@ export class LldbServer {
 
         const session = activeSessions.get(sessionId)!;
 
-        // Send quit command to LLDB
         try {
             await this.executeLldbCommand(session, 'quit');
         } catch (error) {
-            // Ignore errors from quit command, we'll force kill if needed
+            console.error(error)
         }
 
-        // Force kill the process if it's still running
         if (!session.process.killed) {
             session.process.kill();
         }
-
-        // Close the readline interface
-        session.rl?.close();
-
-        // Remove from active sessions
         activeSessions.delete(sessionId);
     }
 
     async run() {
         const transport = new StdioServerTransport();
         await this.server.connect(transport);
-        console.error('LLDB MCP server running on stdio');
     }
 
 }
 
 
-// Create and run the server
 const server = new LldbServer();
 server.run().catch((error) => {
-    console.error('Failed to start LLDB MCP server:', error);
     process.exit(1);
 });

@@ -1,10 +1,8 @@
 import {ChildProcess } from 'child_process';
 
-import * as readline from 'readline';
 
 export interface IlldbSession {
     process: ChildProcess;
-    rl: readline.Interface | null;
     ready: boolean;
     id: string;
     target?: string;
@@ -28,6 +26,10 @@ export enum LLDB_Enum{
     LLDB_PRINT = 'LLDB_PRINT',
     LLDB_NEXT = 'LLDB_NEXT',
     LLDB_FINISH = 'LLDB_FINISH',
+    LLDB_ATTACH = 'LLDB_ATTACH',
+    LLDB_RUN = 'LLDB_RUN',
+    LLDB_FRAME_INFO = 'LLDB_FRAME_INFO',
+    LLDB_DISASSEMBLE = 'LLDB_DISASSEMBLE'
 }
 
 export const LLDB_TOOLS = [
@@ -46,6 +48,24 @@ export const LLDB_TOOLS = [
           description: 'Working directory for LLDB (optional)'
         }
       }
+    }
+  },
+  {
+    name: LLDB_Enum.LLDB_ATTACH,
+    description: 'Attach to a running process',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'LLDB session ID'
+        },
+        pid: {
+          type: 'number',
+          description: 'Process ID to attach to'
+        }
+      },
+      required: ['sessionId', 'pid']
     }
   },
   {
@@ -303,6 +323,56 @@ export const LLDB_TOOLS = [
         }
       },
       required: ['sessionId']
+    }
+  },
+  {
+    name: LLDB_Enum.LLDB_RUN,
+    description: 'Run the program',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'LLDB session ID'
+        }
+      },
+      required: ['sessionId']
+    }
+  },
+  {
+    name: LLDB_Enum.LLDB_FRAME_INFO,
+    description: 'Display frame information',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'LLDB session ID'
+        },
+        frameIndex: {
+          type: 'number',
+          description: 'Frame index'
+        }
+      },
+      required: ['sessionId', 'frameIndex']
+    }
+  },
+  {
+    name: LLDB_Enum.LLDB_DISASSEMBLE,
+    description: 'Disassemble code of a function',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        sessionId: {
+          type: 'string',
+          description: 'LLDB session ID'
+        },
+        address: {
+          type: 'string',
+          description: 'Address to disassemble'
+        }
+      },
+      required: ['sessionId', 'address']
     }
   }
 ];
